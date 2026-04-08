@@ -409,6 +409,8 @@ PacketObj = Union[
     MemoryToolStart,
     MemoryToolDelta,
     MemoryToolNoAccess,
+    # KG Tool Packets
+    KGToolStart,
     # Reasoning Packets
     ReasoningStart,
     ReasoningDelta,
