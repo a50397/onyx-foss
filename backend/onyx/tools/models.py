@@ -208,6 +208,12 @@ class PythonToolOverrideKwargs(BaseModel):
     chat_files: list[ChatFile] = []
 
 
+class KnowledgeGraphToolOverrideKwargs(BaseModel):
+    """Override kwargs for the Knowledge Graph tool."""
+
+    original_query: str | None = None
+
+
 class ImageGenerationToolOverrideKwargs(BaseModel):
     """Override kwargs for image generation tool calls."""
 
