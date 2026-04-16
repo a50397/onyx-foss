@@ -67,6 +67,8 @@ export interface AdvancedConfig {
   refreshFreq: number;
   pruneFreq: number;
   indexingStart: string;
+  kgProcessingEnabled: boolean;
+  kgCoverageDays: number | null;
 }
 
 const BASE_CONNECTOR_URL = "/api/manage/admin/connector";
@@ -298,6 +300,8 @@ export default function AddConnector({
           indexingStart,
           refreshFreq,
           auto_sync_options,
+          kgProcessingEnabled,
+          kgCoverageDays,
           ...connector_specific_config
         } = values;
 
@@ -368,7 +372,9 @@ export default function AddConnector({
               selectedFiles,
               name,
               access_type,
-              groups
+              groups,
+              kgProcessingEnabled,
+              kgCoverageDays
             );
             if (response) {
               onSuccess();
@@ -403,6 +409,8 @@ export default function AddConnector({
                 prune_freq: advancedConfiguration.pruneFreq || null,
                 indexing_start: advancedConfiguration.indexingStart || null,
                 groups: groups,
+                kg_processing_enabled: kgProcessingEnabled ?? false,
+                kg_coverage_days: kgCoverageDays || null,
               },
               undefined,
               credentialActivated ? false : true
@@ -662,7 +670,9 @@ export default function AddConnector({
 
           {formStep === 2 && (
             <CardSection>
-              <AdvancedFormPage />
+              <AdvancedFormPage
+                hidePollingOptions={connector === "file"}
+              />
             </CardSection>
           )}
 
@@ -671,7 +681,7 @@ export default function AddConnector({
             isValid={formikProps.isValid}
             onSubmit={formikProps.handleSubmit}
             noCredentials={noCredentials}
-            noAdvanced={connector == "file"}
+            noAdvanced={false}
           />
         </div>
       )}

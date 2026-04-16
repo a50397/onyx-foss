@@ -1869,6 +1869,10 @@ export function createConnectorValidationSchema(
       1,
       "Refresh frequency must be at least 1 minute"
     ),
+    kgProcessingEnabled: Yup.boolean(),
+    kgCoverageDays: Yup.number()
+      .nullable()
+      .min(1, "Coverage days must be at least 1"),
   });
 
   return object;
@@ -1889,6 +1893,8 @@ export interface ConnectorBase<T> {
   access_type: string;
   groups?: number[];
   from_beginning?: boolean;
+  kg_processing_enabled?: boolean;
+  kg_coverage_days?: number | null;
 }
 
 export interface Connector<T> extends ConnectorBase<T> {
@@ -1911,6 +1917,8 @@ export interface ConnectorSnapshot {
   time_created: string;
   time_updated: string;
   from_beginning?: boolean;
+  kg_processing_enabled?: boolean;
+  kg_coverage_days?: number | null;
 }
 
 export interface WebConfig {
