@@ -20,6 +20,12 @@ const nextConfig = {
   productionBrowserSourceMaps: false,
   output: "standalone",
   transpilePackages: ["@onyx/opal"],
+  // Pin the workspace root. Without this, Next 16 / Turbopack scans upward
+  // looking for the project root and picks the wrong directory because
+  // @onyx/opal lives outside node_modules.
+  turbopack: {
+    root: __dirname,
+  },
   typedRoutes: true,
   reactCompiler: true,
   images: {

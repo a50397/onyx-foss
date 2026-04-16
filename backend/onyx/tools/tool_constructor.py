@@ -178,6 +178,12 @@ def construct_tools(
     for db_tool_model in persona.tools:
         # If allowed_tool_ids is specified, skip tools not in the allowed list
         if allowed_tool_ids is not None and db_tool_model.id not in allowed_tool_ids:
+            logger.info(
+                "Persona tool '%s' (id=%s) skipped: not in allowed_tool_ids=%s",
+                db_tool_model.name,
+                db_tool_model.id,
+                allowed_tool_ids,
+            )
             continue
 
         if db_tool_model.in_code_tool_id:
@@ -192,8 +198,9 @@ def construct_tools(
                 tool_is_available = False
 
             if not tool_is_available:
-                logger.debug(
-                    "Skipping tool %s because it is not available",
+                logger.info(
+                    "Persona tool '%s' (%s) skipped: is_available()=False",
+                    db_tool_model.name,
                     tool_cls.__name__,
                 )
                 continue
@@ -201,15 +208,34 @@ def construct_tools(
             # Handle Internal Search Tool
             if tool_cls.__name__ == SearchTool.__name__:
                 added_search_tool = True
+                logger.info(
+                    "Persona tool SearchTool reached branch. "
+                    "search_usage_forcing_setting=%s, search_tool_config=%s",
+                    search_usage_forcing_setting,
+                    search_tool_config,
+                )
                 if search_usage_forcing_setting == SearchToolUsage.DISABLED:
+                    logger.info(
+                        "SearchTool skipped: search_usage_forcing_setting == DISABLED"
+                    )
                     continue
 
                 if not search_tool_config:
                     search_tool_config = SearchToolConfig()
 
-                tool_dict[db_tool_model.id] = [
-                    _build_search_tool(db_tool_model.id, search_tool_config)
-                ]
+                try:
+                    tool_dict[db_tool_model.id] = [
+                        _build_search_tool(db_tool_model.id, search_tool_config)
+                    ]
+                    logger.info(
+                        "SearchTool built and added to tool_dict[%s]",
+                        db_tool_model.id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "SearchTool construction raised — this is why it's missing "
+                        "from final_tools"
+                    )
 
             # Handle Image Generation Tool
             elif tool_cls.__name__ == ImageGenerationTool.__name__:
@@ -457,5 +483,16 @@ def construct_tools(
     tools: list[Tool] = []
     for tool_list in tool_dict.values():
         tools.extend(tool_list)
+
+    logger.info(
+        "Tool construction complete for persona '%s' (id=%s): built %d tool(s): %s "
+        "(persona had %d tool binding(s): %s)",
+        persona.name,
+        persona.id,
+        len(tools),
+        [t.name for t in tools],
+        len(persona.tools),
+        persona_tool_names,
+    )
 
     return tool_dict
