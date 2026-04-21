@@ -94,6 +94,7 @@ POSTGRES_CELERY_WORKER_MONITORING_APP_NAME = "celery_worker_monitoring"
 POSTGRES_CELERY_WORKER_USER_FILE_PROCESSING_APP_NAME = (
     "celery_worker_user_file_processing"
 )
+POSTGRES_CELERY_WORKER_KG_PROCESSING_APP_NAME = "celery_worker_kg_processing"
 POSTGRES_PERMISSIONS_APP_NAME = "permissions"
 POSTGRES_UNKNOWN_APP_NAME = "unknown"
 
@@ -431,6 +432,9 @@ class OnyxCeleryQueues:
     SANDBOX = "sandbox"
 
     OPENSEARCH_MIGRATION = "opensearch_migration"
+
+    # KG processing queue
+    KG_PROCESSING = "kg_processing"
 
 
 class OnyxRedisLocks:
