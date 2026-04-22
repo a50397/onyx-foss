@@ -380,7 +380,7 @@ def kg_extraction(
                             stats = extract_cv_document(
                                 db_session, unprocessed_document
                             )
-                            update_document_kg_stage(
+                            update_document_kg_info(
                                 db_session,
                                 unprocessed_document.id,
                                 KGStage.EXTRACTED,
@@ -401,6 +401,9 @@ def kg_extraction(
                             )
                             db_session.commit()
                     cv_processed_ids.add(unprocessed_document.id)
+                    last_lock_time = extend_lock(
+                        lock, CELERY_GENERIC_BEAT_LOCK_TIMEOUT, last_lock_time
+                    )
 
             # mark remaining (non-CV) docs in unprocessed_document_batch as EXTRACTING
             for unprocessed_document in unprocessed_document_batch:
