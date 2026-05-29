@@ -103,7 +103,7 @@ export function FileMetadataEditor({
     <div className="space-y-3 p-3 bg-background-50 rounded border border-border">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <Text as="label" figureSmallValue className="block mb-1 font-medium">
+          <Text as="span" figureSmallValue className="block mb-1 font-medium">
             Title
           </Text>
           <input
@@ -115,7 +115,7 @@ export function FileMetadataEditor({
           />
         </div>
         <div>
-          <Text as="label" figureSmallValue className="block mb-1 font-medium">
+          <Text as="span" figureSmallValue className="block mb-1 font-medium">
             Link / URL
           </Text>
           <input
@@ -129,7 +129,7 @@ export function FileMetadataEditor({
       </div>
 
       <div>
-        <Text as="label" figureSmallValue className="block mb-1 font-medium">
+        <Text as="span" figureSmallValue className="block mb-1 font-medium">
           Primary Owners{" "}
           <span className="font-normal text-text-500">(comma-separated)</span>
         </Text>
@@ -145,7 +145,7 @@ export function FileMetadataEditor({
       {/* Custom key-value tags */}
       {customTags.length > 0 && (
         <div className="space-y-2">
-          <Text as="label" figureSmallValue className="block font-medium">
+          <Text as="span" figureSmallValue className="block font-medium">
             Custom Tags
           </Text>
           {customTags.map((tag, index) => (
