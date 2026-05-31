@@ -35,6 +35,7 @@ def upgrade() -> None:
     if not MULTI_TENANT:
         # Enable pg_trgm extension if not already enabled
         op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        op.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
 
         # Create read-only db user here only in single tenant mode. For multi-tenant mode,
         # the user is created in the alembic_tenants migration.

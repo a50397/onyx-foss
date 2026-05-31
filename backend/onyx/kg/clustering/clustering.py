@@ -322,12 +322,21 @@ def _transfer_one_relationship(
             return
 
         # transfer the relationship
-        transferred = transfer_relationship(
-            db_session=db_session,
-            relationship=relationship,
-            entity_translations=entity_translations,
-        )
-        db_session.commit()
+        try:
+            transferred = transfer_relationship(
+                db_session=db_session,
+                relationship=relationship,
+                entity_translations=entity_translations,
+            )
+            db_session.commit()
+        except Exception:
+            logger.exception(
+                "Failed to transfer relationship %s (%s -> %s)",
+                relationship.id_name,
+                relationship.source_node,
+                relationship.target_node,
+            )
+            return
 
     # Sync to Neo4j if enabled
     if KG_QUERY_BACKEND == "neo4j":
@@ -385,7 +394,16 @@ def kg_clustering(
         )
     ):
         for entity in untransferred_grounded_entities:
-            _cluster_one_grounded_entity(entity)
+            try:
+                _cluster_one_grounded_entity(entity)
+            except Exception:
+                logger.exception(
+                    "Failed to transfer entity %s (type=%s, name=%r, doc=%s)",
+                    entity.id_name,
+                    entity.entity_type_id_name,
+                    entity.name,
+                    entity.document_id,
+                )
         last_lock_time = extend_lock(
             lock, CELERY_GENERIC_BEAT_LOCK_TIMEOUT, last_lock_time
         )
@@ -436,6 +454,26 @@ def kg_clustering(
         i_batch + 1,
         format(time_delta, ".2f"),
     )
+
+    # Second pass: pick up any entities that arrived during the first pass
+    # (race between extraction and clustering)
+    for untransferred_grounded_entities in _get_batch_untransferred_grounded_entities(
+        batch_size=processing_chunk_batch_size
+    ):
+        for entity in untransferred_grounded_entities:
+            try:
+                _cluster_one_grounded_entity(entity)
+            except Exception:
+                logger.exception(
+                    "Failed to transfer entity %s (type=%s, name=%r, doc=%s)",
+                    entity.id_name,
+                    entity.entity_type_id_name,
+                    entity.name,
+                    entity.document_id,
+                )
+        last_lock_time = extend_lock(
+            lock, CELERY_GENERIC_BEAT_LOCK_TIMEOUT, last_lock_time
+        )
 
     # Transfer the relationships in parallel
     start_time = time.monotonic()
