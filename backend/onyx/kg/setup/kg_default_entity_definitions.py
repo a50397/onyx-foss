@@ -238,10 +238,157 @@ def get_default_entity_types(vendor_name: str) -> dict[str, KGEntityTypeDefiniti
             grounding=KGGroundingType.GROUNDED,
             grounded_source_name=DocumentSource.SALESFORCE,
         ),
+        # --- CV/Resume entity types (grounded to FILE source) ---
+        "PERSON": KGEntityTypeDefinition(
+            description="A person whose CV/resume is being processed.",
+            attributes=KGEntityTypeAttributes(
+                metadata_attribute_conversion={
+                    "full_name": KGAttributeProperty(name="full_name", keep=True),
+                    "driving_license": KGAttributeProperty(name="driving_license", keep=True),
+                }
+            ),
+            grounding=KGGroundingType.GROUNDED,
+            grounded_source_name=DocumentSource.FILE,
+            active=True,
+        ),
+        "COMPANY": KGEntityTypeDefinition(
+            description="A company or organization mentioned in a CV.",
+            attributes=KGEntityTypeAttributes(
+                metadata_attribute_conversion={
+                    "name": KGAttributeProperty(name="name", keep=True),
+                }
+            ),
+            grounding=KGGroundingType.GROUNDED,
+            grounded_source_name=DocumentSource.FILE,
+            active=True,
+        ),
+        "SKILL": KGEntityTypeDefinition(
+            description="A technical or professional skill (e.g., Python, Project Management).",
+            attributes=KGEntityTypeAttributes(
+                metadata_attribute_conversion={
+                    "name": KGAttributeProperty(name="name", keep=True),
+                    "category": KGAttributeProperty(name="category", keep=True),
+                }
+            ),
+            grounding=KGGroundingType.GROUNDED,
+            grounded_source_name=DocumentSource.FILE,
+            active=True,
+        ),
+        "CERTIFICATION": KGEntityTypeDefinition(
+            description="A professional certification (e.g., AWS Solutions Architect, PMP, CKA).",
+            attributes=KGEntityTypeAttributes(
+                metadata_attribute_conversion={
+                    "name": KGAttributeProperty(name="name", keep=True),
+                    "issuing_authority": KGAttributeProperty(name="issuing_authority", keep=True),
+                    "valid_until": KGAttributeProperty(name="valid_until", keep=True),
+                    "language": KGAttributeProperty(name="language", keep=True),
+                }
+            ),
+            grounding=KGGroundingType.GROUNDED,
+            grounded_source_name=DocumentSource.FILE,
+            active=True,
+        ),
+        "ADDRESS": KGEntityTypeDefinition(
+            description="A physical address.",
+            attributes=KGEntityTypeAttributes(
+                metadata_attribute_conversion={
+                    "address1": KGAttributeProperty(name="address1", keep=True),
+                    "address2": KGAttributeProperty(name="address2", keep=True),
+                    "city": KGAttributeProperty(name="city", keep=True),
+                    "zip": KGAttributeProperty(name="zip", keep=True),
+                    "country": KGAttributeProperty(name="country", keep=True),
+                }
+            ),
+            grounding=KGGroundingType.GROUNDED,
+            grounded_source_name=DocumentSource.FILE,
+            active=True,
+        ),
+        "EMPLOYMENT": KGEntityTypeDefinition(
+            description=(
+                "A specific employment position at a company (reified relationship). "
+                "Links PERSON to COMPANY with job title and dates."
+            ),
+            attributes=KGEntityTypeAttributes(
+                metadata_attribute_conversion={
+                    "title": KGAttributeProperty(name="title", keep=True),
+                    "start_year": KGAttributeProperty(name="start_year", keep=True),
+                    "start_month": KGAttributeProperty(name="start_month", keep=True),
+                    "end_year": KGAttributeProperty(name="end_year", keep=True),
+                    "end_month": KGAttributeProperty(name="end_month", keep=True),
+                }
+            ),
+            grounding=KGGroundingType.GROUNDED,
+            grounded_source_name=DocumentSource.FILE,
+            active=True,
+        ),
+        "PERSON_SKILL": KGEntityTypeDefinition(
+            description=(
+                "A person's proficiency in a specific skill (reified relationship). "
+                "Links PERSON to SKILL with years of experience and proficiency level."
+            ),
+            attributes=KGEntityTypeAttributes(
+                metadata_attribute_conversion={
+                    "years_experience": KGAttributeProperty(name="years_experience", keep=True),
+                    "proficiency": KGAttributeProperty(name="proficiency", keep=True),
+                }
+            ),
+            grounding=KGGroundingType.GROUNDED,
+            grounded_source_name=DocumentSource.FILE,
+            active=True,
+        ),
+        "PROJECT": KGEntityTypeDefinition(
+            description=(
+                "A project a person works on (reified relationship). "
+                "Links PERSON to COMPANY and SKILLs with dates."
+            ),
+            attributes=KGEntityTypeAttributes(
+                metadata_attribute_conversion={
+                    "name": KGAttributeProperty(name="name", keep=True),
+                    "start_year": KGAttributeProperty(name="start_year", keep=True),
+                    "start_month": KGAttributeProperty(name="start_month", keep=True),
+                    "end_year": KGAttributeProperty(name="end_year", keep=True),
+                    "end_month": KGAttributeProperty(name="end_month", keep=True),
+                }
+            ),
+            grounding=KGGroundingType.GROUNDED,
+            grounded_source_name=DocumentSource.FILE,
+            active=True,
+        ),
+        "INSTITUTION": KGEntityTypeDefinition(
+            description="An educational institution (university, college, school).",
+            attributes=KGEntityTypeAttributes(
+                metadata_attribute_conversion={
+                    "name": KGAttributeProperty(name="name", keep=True),
+                }
+            ),
+            grounding=KGGroundingType.GROUNDED,
+            grounded_source_name=DocumentSource.FILE,
+            active=True,
+        ),
+        "EDUCATION": KGEntityTypeDefinition(
+            description=(
+                "A degree or educational program completed (reified relationship). "
+                "Links PERSON to INSTITUTION with degree, field, and dates."
+            ),
+            attributes=KGEntityTypeAttributes(
+                metadata_attribute_conversion={
+                    "degree": KGAttributeProperty(name="degree", keep=True),
+                    "field": KGAttributeProperty(name="field", keep=True),
+                    "start_year": KGAttributeProperty(name="start_year", keep=True),
+                    "start_month": KGAttributeProperty(name="start_month", keep=True),
+                    "end_year": KGAttributeProperty(name="end_year", keep=True),
+                    "end_month": KGAttributeProperty(name="end_month", keep=True),
+                }
+            ),
+            grounding=KGGroundingType.GROUNDED,
+            grounded_source_name=DocumentSource.FILE,
+            active=True,
+        ),
+        # --- End CV/Resume entity types ---
         "VENDOR": KGEntityTypeDefinition(
             description=f"The Vendor {vendor_name}, 'us'",
             grounding=KGGroundingType.GROUNDED,
-            active=True,
+            active=False,
             grounded_source_name=None,
         ),
         "EMPLOYEE": KGEntityTypeDefinition(
@@ -257,34 +404,103 @@ def get_default_entity_types(vendor_name: str) -> dict[str, KGEntityTypeDefiniti
     }
 
 
+def get_default_relationship_types() -> list[dict[str, str]]:
+    """Default relationship types for the CV/resume reified entity model.
+
+    Each entry defines: source entity type → relationship name → target entity type.
+    """
+    return [
+        {"source": "PERSON",       "name": "LIVES_AT",          "target": "ADDRESS"},
+        {"source": "COMPANY",      "name": "LOCATED_AT",        "target": "ADDRESS"},
+        {"source": "PERSON",       "name": "HOLDS_CERT",        "target": "CERTIFICATION"},
+        {"source": "PERSON",       "name": "HAS_EMPLOYMENT",    "target": "EMPLOYMENT"},
+        {"source": "EMPLOYMENT",   "name": "EMPLOYMENT_AT",     "target": "COMPANY"},
+        {"source": "PERSON",       "name": "HAS_PERSON_SKILL",  "target": "PERSON_SKILL"},
+        {"source": "PERSON_SKILL", "name": "SKILL_OF",          "target": "SKILL"},
+        {"source": "PERSON",       "name": "WORKS_ON_PROJECT",  "target": "PROJECT"},
+        {"source": "PROJECT",      "name": "PROJECT_AT",        "target": "COMPANY"},
+        {"source": "PROJECT",      "name": "PROJECT_USES_SKILL","target": "SKILL"},
+        {"source": "PERSON",       "name": "HAS_EDUCATION",     "target": "EDUCATION"},
+        {"source": "EDUCATION",    "name": "EDUCATION_AT",      "target": "INSTITUTION"},
+    ]
+
+
+def populate_missing_default_relationship_types__commit(db_session: Session) -> None:
+    """Populates the database with default relationship types for CV extraction."""
+    from onyx.db.relationships import upsert_relationship_type
+
+    for rt in get_default_relationship_types():
+        upsert_relationship_type(
+            db_session=db_session,
+            source_entity_type=rt["source"],
+            relationship_type=rt["name"],
+            target_entity_type=rt["target"],
+        )
+    db_session.commit()
+
+
 def populate_missing_default_entity_types__commit(db_session: Session) -> None:
     """
-    Populates the database with the missing default entity types.
+    Populates the database with missing default entity types AND syncs the
+    `attributes` column for existing rows back to the source-of-truth
+    definitions.
+
+    The original version skipped any entity type that already existed in the
+    DB. That worked for the initial seed, but it meant: when the default
+    definitions changed (e.g. adding metadata_attribute_conversion to CV
+    reified types), the existing rows kept their stale schema forever.
+    Symptom: every LLM-emitted attribute silently dropped because
+    `parsed_attributes` found zero keys in the stored conversion dict.
+
+    Current behavior: for each default type, INSERT if missing, and UPDATE
+    `attributes`/`description`/`grounding`/`active` if the row exists but
+    its `attributes` dump differs from the default. This keeps the DB in
+    sync with code on every call (admin reset, KG enable, chat-path call).
+    Name / grounded_source_name are stable identifiers and not re-synced.
     """
     kg_config_settings = get_kg_config_settings()
     validate_kg_settings(kg_config_settings)
 
     vendor_name = cast(str, kg_config_settings.KG_VENDOR)
 
-    existing_entity_types = {et.id_name for et in db_session.query(KGEntityType).all()}
+    existing_by_id: dict[str, KGEntityType] = {
+        et.id_name: et for et in db_session.query(KGEntityType).all()
+    }
 
     default_entity_types = get_default_entity_types(vendor_name=vendor_name)
     for entity_type_id_name, entity_type_definition in default_entity_types.items():
-        if entity_type_id_name in existing_entity_types:
-            continue
-
         grounded_source_name = (
             entity_type_definition.grounded_source_name.value
             if entity_type_definition.grounded_source_name
             else None
         )
-        kg_entity_type = KGEntityType(
-            id_name=entity_type_id_name,
-            description=entity_type_definition.description,
-            attributes=entity_type_definition.attributes.model_dump(),
-            grounding=entity_type_definition.grounding,
-            grounded_source_name=grounded_source_name,
-            active=entity_type_definition.active,
-        )
-        db_session.add(kg_entity_type)
+        expected_attributes = entity_type_definition.attributes.model_dump()
+
+        existing = existing_by_id.get(entity_type_id_name)
+        if existing is None:
+            kg_entity_type = KGEntityType(
+                id_name=entity_type_id_name,
+                description=entity_type_definition.description,
+                attributes=expected_attributes,
+                grounding=entity_type_definition.grounding,
+                grounded_source_name=grounded_source_name,
+                active=entity_type_definition.active,
+            )
+            db_session.add(kg_entity_type)
+            continue
+
+        # Row exists — sync the definitional columns if they drifted.
+        # `attributes` is the load-bearing one for extraction; the others
+        # are updated so admins can edit defaults in code without having
+        # to re-seed the DB.
+        if existing.attributes != expected_attributes:
+            existing.attributes = expected_attributes
+        if existing.description != entity_type_definition.description:
+            existing.description = entity_type_definition.description
+        if existing.grounding != entity_type_definition.grounding:
+            existing.grounding = entity_type_definition.grounding
+        if existing.grounded_source_name != grounded_source_name:
+            existing.grounded_source_name = grounded_source_name
+        # Do NOT touch `active` — admins can toggle it via the UI and we
+        # don't want startup sync to override their intent.
     db_session.commit()

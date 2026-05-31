@@ -31,6 +31,7 @@ from onyx.document_index.vespa.kg_interactions import (
 from onyx.document_index.vespa.kg_interactions import update_kg_chunks_vespa_info
 from onyx.kg.models import KGGroundingType
 from onyx.kg.utils.formatting_utils import make_relationship_id
+from onyx.configs.kg_configs import KG_QUERY_BACKEND
 from onyx.kg.utils.lock_utils import extend_lock
 from onyx.utils.logger import setup_logger
 from onyx.utils.threadpool_concurrency import run_functions_tuples_in_parallel
@@ -150,9 +151,24 @@ def _cluster_one_grounded_entity(
     """
     Cluster a single grounded entity.
     """
+    # Entity types where the entity IS the document — for these, the name
+    # should be the document's semantic_id (e.g. "JIRA-123", not a UUID).
+    # This is an allow-list: any type NOT listed keeps its own staged name.
+    # New entity types (CV-extracted, future connectors) default to keeping
+    # their real name, which is the safe behavior.
+    _DOCUMENT_IS_ENTITY_TYPES = frozenset({
+        "LINEAR", "JIRA", "GITHUB_PR", "GITHUB_ISSUE",
+        "FIREFLIES", "ACCOUNT", "OPPORTUNITY",
+    })
+
     with get_session_with_current_tenant() as db_session:
         # get entity name and filtering conditions
-        if entity.document_id is not None:
+        if (
+            entity.document_id is not None
+            and entity.entity_type_id_name in _DOCUMENT_IS_ENTITY_TYPES
+        ):
+            # For document-level grounded entities (calls, tickets, etc.) the
+            # entity identity IS the document, so use the document's semantic_id.
             entity_name = cast(
                 str,
                 db_session.query(Document.semantic_id)
@@ -161,8 +177,10 @@ def _cluster_one_grounded_entity(
             ).lower()
             filtering = [KGEntity.document_id.is_(None)]
         else:
+            # For all other entities (CV-extracted, etc.) the identity is
+            # the real name from extraction, not the filename.
             entity_name = entity.name.lower()
-            filtering = []
+            filtering = [KGEntity.document_id.is_(None)] if entity.document_id is not None else []
 
         # skip those with numbers so we don't cluster version1 and version2, etc.
         similar_entities: list[KGEntity] = []
@@ -214,6 +232,23 @@ def _cluster_one_grounded_entity(
             transferred_entity = transfer_entity(db_session=db_session, entity=entity)
 
         db_session.commit()
+
+    # Sync to Neo4j if enabled
+    if KG_QUERY_BACKEND == "neo4j":
+        try:
+            from onyx.db.neo4j_sync import sync_entity
+
+            sync_entity(
+                id_name=transferred_entity.id_name,
+                name=transferred_entity.name,
+                entity_type=transferred_entity.entity_type_id_name,
+                document_id=transferred_entity.document_id,
+                attributes=transferred_entity.attributes or {},
+            )
+        except Exception:
+            logger.warning(
+                "Neo4j sync failed for entity %s", transferred_entity.id_name
+            )
 
     return transferred_entity, update_vespa
 
@@ -287,12 +322,42 @@ def _transfer_one_relationship(
             return
 
         # transfer the relationship
-        transfer_relationship(
-            db_session=db_session,
-            relationship=relationship,
-            entity_translations=entity_translations,
-        )
-        db_session.commit()
+        try:
+            transferred = transfer_relationship(
+                db_session=db_session,
+                relationship=relationship,
+                entity_translations=entity_translations,
+            )
+            db_session.commit()
+        except Exception:
+            logger.exception(
+                "Failed to transfer relationship %s (%s -> %s)",
+                relationship.id_name,
+                relationship.source_node,
+                relationship.target_node,
+            )
+            return
+
+    # Sync to Neo4j if enabled
+    if KG_QUERY_BACKEND == "neo4j":
+        try:
+            from onyx.db.neo4j_sync import sync_relationship as neo4j_sync_rel
+
+            parts = transferred.relationship_type_id_name.split("__")
+            verb = parts[1] if len(parts) == 3 else transferred.type
+
+            neo4j_sync_rel(
+                source_node=transferred.source_node,
+                target_node=transferred.target_node,
+                source_type=transferred.source_node_type,
+                target_type=transferred.target_node_type,
+                rel_verb=verb,
+                source_document=transferred.source_document,
+            )
+        except Exception:
+            logger.warning(
+                "Neo4j sync failed for relationship %s", transferred.id_name
+            )
 
 
 def kg_clustering(
@@ -329,7 +394,16 @@ def kg_clustering(
         )
     ):
         for entity in untransferred_grounded_entities:
-            _cluster_one_grounded_entity(entity)
+            try:
+                _cluster_one_grounded_entity(entity)
+            except Exception:
+                logger.exception(
+                    "Failed to transfer entity %s (type=%s, name=%r, doc=%s)",
+                    entity.id_name,
+                    entity.entity_type_id_name,
+                    entity.name,
+                    entity.document_id,
+                )
         last_lock_time = extend_lock(
             lock, CELERY_GENERIC_BEAT_LOCK_TIMEOUT, last_lock_time
         )
@@ -380,6 +454,26 @@ def kg_clustering(
         i_batch + 1,
         format(time_delta, ".2f"),
     )
+
+    # Second pass: pick up any entities that arrived during the first pass
+    # (race between extraction and clustering)
+    for untransferred_grounded_entities in _get_batch_untransferred_grounded_entities(
+        batch_size=processing_chunk_batch_size
+    ):
+        for entity in untransferred_grounded_entities:
+            try:
+                _cluster_one_grounded_entity(entity)
+            except Exception:
+                logger.exception(
+                    "Failed to transfer entity %s (type=%s, name=%r, doc=%s)",
+                    entity.id_name,
+                    entity.entity_type_id_name,
+                    entity.name,
+                    entity.document_id,
+                )
+        last_lock_time = extend_lock(
+            lock, CELERY_GENERIC_BEAT_LOCK_TIMEOUT, last_lock_time
+        )
 
     # Transfer the relationships in parallel
     start_time = time.monotonic()
@@ -432,12 +526,38 @@ def kg_clustering(
         format(time_delta, ".2f"),
     )
 
-    # Delete the transferred objects from the staging tables
+    # Delete the transferred objects from the staging tables.
+    # Order matters for FK constraints:
+    #   1. Relationships first (they FK → entities AND relationship types)
+    #   2. Relationship types second
+    #   3. Entities last
+    #
+    # We must also delete relationships whose SOURCE or TARGET entity has
+    # been transferred, even if the relationship itself isn't marked
+    # transferred — otherwise the entity delete at step 3 FK-violates
+    # against orphaned relationship rows.
     try:
         with get_session_with_current_tenant() as db_session:
+            # Delete transferred relationships
             db_session.query(KGRelationshipExtractionStaging).filter(
                 KGRelationshipExtractionStaging.transferred.is_(True)
             ).delete(synchronize_session=False)
+
+            # Delete orphaned relationships whose endpoints were transferred
+            transferred_entity_ids = (
+                db_session.query(KGEntityExtractionStaging.id_name)
+                .filter(KGEntityExtractionStaging.transferred_id_name.is_not(None))
+                .subquery()
+            )
+            db_session.query(KGRelationshipExtractionStaging).filter(
+                KGRelationshipExtractionStaging.source_node.in_(
+                    transferred_entity_ids
+                )
+                | KGRelationshipExtractionStaging.target_node.in_(
+                    transferred_entity_ids
+                )
+            ).delete(synchronize_session=False)
+
             db_session.commit()
     except Exception as e:
         logger.error("Error deleting relationships: %s", e)

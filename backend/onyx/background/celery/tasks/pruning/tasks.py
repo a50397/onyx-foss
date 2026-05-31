@@ -60,6 +60,7 @@ from onyx.db.models import ConnectorCredentialPair
 from onyx.db.models import HierarchyNode as DBHierarchyNode
 from onyx.db.sync_record import insert_sync_record
 from onyx.db.sync_record import update_sync_record_status
+from onyx.db.document import delete_orphaned_kg_references__no_commit
 from onyx.db.tag import delete_orphan_tags__no_commit
 from onyx.redis.redis_connector import RedisConnector
 from onyx.redis.redis_connector_prune import RedisConnectorPrune
@@ -266,6 +267,40 @@ def check_for_pruning(self: Task, *, tenant_id: str) -> bool | None:
             if prune_dispatched:
                 maybe_mark_tenant_active(tenant_id, caller="check_for_pruning")
             r.set(OnyxRedisSignals.BLOCK_PRUNING, 1, ex=_get_pruning_block_expiration())
+
+        # we want to run this less frequently than the overall task
+        lock_beat.reacquire()
+        if not r.exists(OnyxRedisSignals.BLOCK_KG_ORPHAN_CLEANUP):
+            # Don't run orphan cleanup while KG extraction/clustering is in progress
+            # to prevent race condition where cleanup deletes entities mid-creation.
+            # Check both beat locks and manual pipeline lock.
+            kg_extraction_in_progress = r.exists(
+                OnyxRedisLocks.KG_EXTRACTION_BEAT_LOCK
+            )
+            kg_clustering_in_progress = r.exists(
+                OnyxRedisLocks.KG_CLUSTERING_BEAT_LOCK
+            )
+            # Manual KG pipeline (for debugging) also creates staging entities
+            manual_kg_pipeline_in_progress = r.exists("da_lock:manual_kg_pipeline")
+
+            if (
+                kg_extraction_in_progress
+                or kg_clustering_in_progress
+                or manual_kg_pipeline_in_progress
+            ):
+                task_logger.info(
+                    "Skipping KG orphan cleanup: KG extraction/clustering in progress"
+                )
+            else:
+                try:
+                    with get_session_with_current_tenant() as db_session:
+                        delete_orphaned_kg_references__no_commit(db_session)
+                        db_session.commit()
+                except Exception:
+                    task_logger.exception(
+                        "Exception while cleaning up orphaned KG references"
+                    )
+                r.set(OnyxRedisSignals.BLOCK_KG_ORPHAN_CLEANUP, 1, ex=3600)
 
         # we want to run this less frequently than the overall task
         lock_beat.reacquire()
@@ -806,6 +841,7 @@ def monitor_ccpair_pruning_taskset(
     )
 
     delete_orphan_tags__no_commit(db_session)
+    delete_orphaned_kg_references__no_commit(db_session)
 
     redis_connector.prune.taskset_clear()
     redis_connector.prune.generator_clear()

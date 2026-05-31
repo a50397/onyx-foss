@@ -3,18 +3,35 @@ import { createConnector, runConnector } from "@/lib/connector";
 import { createCredential, linkCredential } from "@/lib/credential";
 import { FileConfig } from "@/lib/connectors/connectors";
 import { AccessType, ValidSources } from "@/lib/types";
+import type { FileMetadata } from "@/components/admin/connectors/FileMetadataEditor";
 
 export const submitFiles = async (
   selectedFiles: File[],
   name: string,
   access_type: string,
-  groups?: number[]
+  groups?: number[],
+  kgProcessingEnabled?: boolean,
+  kgCoverageDays?: number | null,
+  fileMetadata?: Record<string, FileMetadata>
 ) => {
   const formData = new FormData();
 
   selectedFiles.forEach((file) => {
     formData.append("files", file);
   });
+
+  // Attach per-file metadata if provided and non-empty
+  if (fileMetadata && Object.keys(fileMetadata).length > 0) {
+    // Filter out empty metadata objects
+    const nonEmptyMetadata = Object.fromEntries(
+      Object.entries(fileMetadata).filter(
+        ([, meta]) => Object.keys(meta).length > 0
+      )
+    );
+    if (Object.keys(nonEmptyMetadata).length > 0) {
+      formData.append("metadata", JSON.stringify(nonEmptyMetadata));
+    }
+  }
 
   const response = await fetch("/api/manage/admin/connector/file/upload", {
     method: "POST",
@@ -44,6 +61,8 @@ export const submitFiles = async (
     indexing_start: null,
     access_type: access_type,
     groups: groups,
+    kg_processing_enabled: kgProcessingEnabled ?? false,
+    kg_coverage_days: kgCoverageDays ?? null,
   });
   if (connectorErrorMsg || !connector) {
     toast.error(`Unable to create connector - ${connectorErrorMsg}`);

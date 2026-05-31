@@ -67,6 +67,16 @@ KG_TIMEOUT_LLM_INITIAL_ANSWER_GENERATION: int = int(
     os.environ.get("KG_TIMEOUT_LLM_INITIAL_ANSWER_GENERATION", "45")
 )
 
+
+# When content classification rules a file-connector document NOT_CV (e.g. a
+# tender / procurement / contract document mistakenly tagged as a CV), skip
+# KG extraction for it entirely rather than running GENERAL_CHUNK_PREPROCESSING
+# over content that wasn't intended for this pipeline. Default is True for the
+# CV-focused FOSS deployment; set to "false" to restore general extraction.
+KG_SKIP_EXTRACTION_FOR_NON_CV_FILES: bool = (
+    os.environ.get("KG_SKIP_EXTRACTION_FOR_NON_CV_FILES", "true").lower() == "true"
+)
+
 KG_TIMEOUT_CONNECT_LLM_INITIAL_ANSWER_GENERATION: int = int(
     os.environ.get("KG_TIMEOUT_CONNECT_LLM_INITIAL_ANSWER_GENERATION", "15")
 )
@@ -144,3 +154,12 @@ KG_BETA_ASSISTANT_DESCRIPTION = (
     "The KG Beta assistant uses the Onyx Knowledge Graph (beta) structure \
 to answer questions"
 )
+
+# Neo4j configuration for the graph query backend
+NEO4J_URI: str = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER: str = os.environ.get("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD: str = os.environ.get("NEO4J_PASSWORD", "neo4jpassword")
+NEO4J_DATABASE: str = os.environ.get("NEO4J_DATABASE", "neo4j")
+
+# "postgres" = current SQL self-join backend, "neo4j" = Cypher traversal backend
+KG_QUERY_BACKEND: str = os.environ.get("KG_QUERY_BACKEND", "postgres")

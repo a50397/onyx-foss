@@ -22,6 +22,7 @@ depends_on = None
 def upgrade() -> None:
     # Enable pg_trgm extension if not already enabled
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    op.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
 
     # Create the read-only db user if it does not already exist.
     if not (DB_READONLY_USER and DB_READONLY_PASSWORD):

@@ -94,6 +94,7 @@ POSTGRES_CELERY_WORKER_USER_FILE_PROCESSING_APP_NAME = (
     "celery_worker_user_file_processing"
 )
 POSTGRES_CELERY_WORKER_SCHEDULED_TASKS_APP_NAME = "celery_worker_scheduled_tasks"
+POSTGRES_CELERY_WORKER_KG_PROCESSING_APP_NAME = "celery_worker_kg_processing"
 POSTGRES_PERMISSIONS_APP_NAME = "permissions"
 POSTGRES_UNKNOWN_APP_NAME = "unknown"
 
@@ -446,6 +447,9 @@ class OnyxCeleryQueues:
 
     OPENSEARCH_MIGRATION = "opensearch_migration"
 
+    # KG processing queue
+    KG_PROCESSING = "kg_processing"
+
 
 class OnyxRedisLocks:
     PRIMARY_WORKER = "da_lock:primary_worker"
@@ -466,6 +470,8 @@ class OnyxRedisLocks:
     OPENSEARCH_VERIFY_INDEX_LOCK_PREFIX = "da_lock:opensearch_verify_index"
 
     MONITOR_BACKGROUND_PROCESSES_LOCK = "da_lock:monitor_background_processes"
+    KG_EXTRACTION_BEAT_LOCK = "da_lock:kg_extraction_beat"
+    KG_CLUSTERING_BEAT_LOCK = "da_lock:kg_clustering_beat"
     CHECK_AVAILABLE_TENANTS_LOCK = "da_lock:check_available_tenants"
     CLOUD_PRE_PROVISION_TENANT_LOCK = "da_lock:pre_provision_tenant"
 
@@ -516,6 +522,7 @@ class OnyxRedisSignals:
     )
     BLOCK_PRUNING = "signal:block_pruning"
     BLOCK_VALIDATE_PRUNING_FENCES = "signal:block_validate_pruning_fences"
+    BLOCK_KG_ORPHAN_CLEANUP = "signal:block_kg_orphan_cleanup"
     BLOCK_BUILD_FENCE_LOOKUP_TABLE = "signal:block_build_fence_lookup_table"
     BLOCK_VALIDATE_CONNECTOR_DELETION_FENCES = (
         "signal:block_validate_connector_deletion_fences"
@@ -592,6 +599,10 @@ class OnyxCeleryTask:
     MONITOR_CELERY_QUEUES = "monitor_celery_queues"
     MONITOR_PROCESS_MEMORY = "monitor_process_memory"
     CELERY_BEAT_HEARTBEAT = "celery_beat_heartbeat"
+
+    # Knowledge Graph
+    KG_EXTRACTION = "kg_extraction_task"
+    KG_CLUSTERING = "kg_clustering_task"
 
     CONNECTOR_PERMISSION_SYNC_GENERATOR_TASK = (
         "connector_permission_sync_generator_task"

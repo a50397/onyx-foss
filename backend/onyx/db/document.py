@@ -41,7 +41,10 @@ from onyx.db.models import Credential
 from onyx.db.models import Document as DbDocument
 from onyx.db.models import DocumentByConnectorCredentialPair
 from onyx.db.models import KGEntity
+from onyx.db.models import KGEntityExtractionStaging
+from onyx.db.models import KGEntityType
 from onyx.db.models import KGRelationship
+from onyx.db.models import KGRelationshipExtractionStaging
 from onyx.db.models import User
 from onyx.db.relationships import delete_from_kg_relationships__no_commit
 from onyx.db.relationships import (
@@ -714,6 +717,9 @@ def upsert_documents(
         "doc_metadata": insert_stmt.excluded.doc_metadata,
         "parent_hierarchy_node_id": insert_stmt.excluded.parent_hierarchy_node_id,
         "file_id": insert_stmt.excluded.file_id,
+        # Reset KG state so re-indexed documents get re-extracted
+        "kg_stage": insert_stmt.excluded.kg_stage,
+        "kg_processing_time": None,
     }
     if includes_permissions:
         # Use COALESCE to preserve existing permissions when new values are NULL.
@@ -934,6 +940,82 @@ def delete_all_documents_by_connector_credential_pair__no_commit(
         )
     )
     db_session.execute(stmt)
+
+
+def delete_orphaned_kg_references__no_commit(db_session: Session) -> None:
+    """Delete KG rows that reference documents that no longer exist.
+
+    A "surviving" entity is one that is still grounded in an existing document:
+    - Document-level entity: document_id IS NOT NULL and document still exists.
+    - Canonical entity (document_id IS NULL): has at least one document-level
+      child (via parent_key) whose document still exists.
+
+    All relationships and staging rows whose endpoints or source document are
+    no longer backed by surviving data are deleted first (to satisfy FK
+    constraints), then the orphaned entities themselves are removed.
+    """
+    existing_document_ids = select(DbDocument.id)
+
+    # Surviving doc-level entity id_names
+    surviving_doc_entity_ids = select(KGEntity.id_name).where(
+        KGEntity.document_id.is_not(None),
+        KGEntity.document_id.in_(existing_document_ids),
+    )
+
+    # Surviving canonical entity id_names (those still referenced by a surviving
+    # doc-level entity via parent_key)
+    surviving_canonical_entity_ids = select(KGEntity.parent_key).where(
+        KGEntity.document_id.is_not(None),
+        KGEntity.document_id.in_(existing_document_ids),
+        KGEntity.parent_key.is_not(None),
+    )
+
+    # Union: all entity id_names that should be kept
+    surviving_entity_ids = surviving_doc_entity_ids.union(surviving_canonical_entity_ids)
+
+    # Delete all relationships whose source document is gone OR whose
+    # source_node / target_node no longer has a surviving entity.
+    # Relationships must be deleted before entities to satisfy FK constraints.
+    db_session.query(KGRelationship).filter(
+        or_(
+            and_(
+                KGRelationship.source_document.is_not(None),
+                ~KGRelationship.source_document.in_(existing_document_ids),
+            ),
+            ~KGRelationship.source_node.in_(surviving_entity_ids),
+            ~KGRelationship.target_node.in_(surviving_entity_ids),
+        )
+    ).delete(synchronize_session=False)
+
+    db_session.query(KGRelationshipExtractionStaging).filter(
+        or_(
+            and_(
+                KGRelationshipExtractionStaging.source_document.is_not(None),
+                ~KGRelationshipExtractionStaging.source_document.in_(
+                    existing_document_ids
+                ),
+            ),
+            ~KGRelationshipExtractionStaging.source_node.in_(surviving_entity_ids),
+            ~KGRelationshipExtractionStaging.target_node.in_(surviving_entity_ids),
+        )
+    ).delete(synchronize_session=False)
+
+    # Delete orphaned doc-level entities
+    db_session.query(KGEntity).filter(
+        KGEntity.document_id.is_not(None),
+        ~KGEntity.document_id.in_(existing_document_ids),
+    ).delete(synchronize_session=False)
+
+    db_session.query(KGEntityExtractionStaging).filter(
+        KGEntityExtractionStaging.document_id.is_not(None),
+        ~KGEntityExtractionStaging.document_id.in_(existing_document_ids),
+    ).delete(synchronize_session=False)
+
+    # Delete orphaned canonical entities (no surviving doc-level children)
+    db_session.query(KGEntity).filter(
+        KGEntity.document_id.is_(None),
+        ~KGEntity.id_name.in_(surviving_canonical_entity_ids),
+    ).delete(synchronize_session=False)
 
 
 def delete_documents__no_commit(db_session: Session, document_ids: list[str]) -> None:
@@ -1456,6 +1538,111 @@ def reset_all_document_kg_stages(db_session: Session) -> int:
         if hasattr(result, "rowcount")
         else 0
     )
+
+
+def reset_connector_document_kg_stages(
+    db_session: Session, connector_id: int
+) -> int:
+    """Reset KG state for all documents belonging to a connector so that the KG
+    beat task fully re-extracts and re-clusters them.
+
+    Specifically this:
+      1. Resets kg_stage → NOT_STARTED and clears kg_processing_time on the
+         document rows so the beat task picks them up again.
+      2. Deletes staging rows for those documents so that clustering produces
+         fresh normalized entities/relationships.
+      3. Deletes normalized kg_entity / kg_relationship rows whose document_id
+         is NULL (orphans left by merging) but whose entity type is grounded to
+         this connector's source.  These are unreachable by the per-document
+         delete that runs during normal re-extraction.
+
+    Called when a full reindex (from_beginning=True) is triggered.
+
+    Args:
+        db_session: The database session to use
+        connector_id: The connector whose documents should be reset
+
+    Returns:
+        int: Number of document rows whose kg_stage was reset
+    """
+    # Resolve the connector's source so we can scope orphan deletion by entity type
+    connector = db_session.get(Connector, connector_id)
+    if connector is None or not connector.kg_processing_enabled:
+        return 0
+
+    doc_ids: list[str] = list(
+        db_session.scalars(
+            select(DocumentByConnectorCredentialPair.id).where(
+                DocumentByConnectorCredentialPair.connector_id == connector_id
+            )
+        ).all()
+    )
+
+    if not doc_ids:
+        return 0
+
+    # 1. Clear staging so clustering re-runs from scratch
+    delete_from_kg_entities_extraction_staging__no_commit(db_session, doc_ids)
+    delete_from_kg_relationships_extraction_staging__no_commit(db_session, doc_ids)
+
+    # 2. Delete orphan normalized rows (document_id IS NULL) scoped to this
+    #    connector's entity types via grounded_source_name = connector.source
+    entity_type_ids: list[str] = list(
+        db_session.scalars(
+            select(KGEntityType.id_name).where(
+                KGEntityType.grounded_source_name == connector.source.value
+            )
+        ).all()
+    )
+    if entity_type_ids:
+        # Collect the id_names of orphan entities we will delete
+        orphan_entity_id_names: list[str] = list(
+            db_session.scalars(
+                select(KGEntity.id_name).where(
+                    KGEntity.entity_type_id_name.in_(entity_type_ids),
+                    KGEntity.document_id.is_(None),
+                )
+            ).all()
+        )
+        if orphan_entity_id_names:
+            # Delete all relationships referencing these entities as source OR target
+            db_session.query(KGRelationship).filter(
+                or_(
+                    KGRelationship.source_node.in_(orphan_entity_id_names),
+                    KGRelationship.target_node.in_(orphan_entity_id_names),
+                )
+            ).delete(synchronize_session=False)
+            db_session.query(KGEntity).filter(
+                KGEntity.id_name.in_(orphan_entity_id_names),
+            ).delete(synchronize_session=False)
+
+    # 3. Clean up Neo4j if enabled
+    from onyx.configs.kg_configs import KG_QUERY_BACKEND
+
+    if KG_QUERY_BACKEND == "neo4j":
+        try:
+            from onyx.db.neo4j_sync import (
+                delete_entities as neo4j_delete_entities,
+                delete_relationships_for_documents as neo4j_delete_rels,
+            )
+
+            neo4j_delete_rels(doc_ids)
+            if orphan_entity_id_names:
+                neo4j_delete_entities(orphan_entity_id_names)
+        except Exception:
+            logger.warning(
+                "Neo4j cleanup failed during connector KG reset: connector=%s",
+                connector_id,
+            )
+
+    # 4. Reset document kg_stage so extraction picks them up
+    stmt = (
+        update(DbDocument)
+        .where(DbDocument.id.in_(doc_ids))
+        .values(kg_stage=KGStage.NOT_STARTED, kg_processing_time=None)
+    )
+    result = db_session.execute(stmt)
+    return result.rowcount if hasattr(result, "rowcount") else 0
 
 
 def update_document_kg_stages(
