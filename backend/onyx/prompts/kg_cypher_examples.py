@@ -280,14 +280,19 @@ RELATIONSHIP_CYPHER_EXAMPLES: list[CypherExample] = [
         ),
     },
     {
+        # NOTE: For "Ministerstvo vnútra" use the distinctive word 'vnutra',
+        # not the generic 'ministerstvo' which matches every ministry.
+        # NOTE: Search BOTH proj.name_ascii and pc.name_ascii — the customer
+        # name is often embedded in the project name without a PROJECT_AT link.
         "question": (
             "Who worked on a project for Ministerstvo vnútra, works at Ditec "
             "for at least 2 years, and holds an SOA certification?"
         ),
         "cypher": (
-            "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project)"
-            "-[:PROJECT_AT]->(pc:Company) "
-            "WHERE toLower(pc.name_ascii) CONTAINS 'ministerstvo' "
+            "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project) "
+            "OPTIONAL MATCH (proj)-[:PROJECT_AT]->(pc:Company) "
+            "WHERE toLower(proj.name_ascii) CONTAINS 'vnutra' "
+            "OR toLower(pc.name_ascii) CONTAINS 'vnutra' "
             "WITH p "
             "MATCH (p)-[:HAS_EMPLOYMENT]->(e:Employment)"
             "-[:EMPLOYMENT_AT]->(c:Company) "

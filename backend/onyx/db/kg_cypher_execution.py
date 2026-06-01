@@ -109,13 +109,32 @@ def inject_acl_filter(cypher: str) -> str:
 
             # Insert into existing WHERE clause or add one before WITH/RETURN
             if re.search(r"\bWHERE\b", branch, re.IGNORECASE):
-                # Add to the FIRST WHERE clause after the Person MATCH
-                branch = re.sub(
-                    r"(\bWHERE\b)",
-                    rf"\1 {acl_clause} AND",
-                    branch,
-                    count=1,
-                    flags=re.IGNORECASE,
+                # Wrap the existing WHERE condition in parentheses so that
+                # the ACL filter is always ANDed with the entire condition,
+                # not just the first term.  Without this, OR clauses in the
+                # original WHERE can bypass the ACL check due to operator
+                # precedence: ``WHERE acl AND A OR B`` → ``(acl AND A) OR B``.
+                first_where = re.search(r"\bWHERE\b", branch, re.IGNORECASE)
+                assert first_where is not None
+                where_end = first_where.end()
+
+                # Find the end of this WHERE clause — bounded by WITH, RETURN,
+                # ORDER, UNION, or end of string.
+                rest = branch[where_end:]
+                clause_end_match = re.search(
+                    r"\b(WITH|RETURN|ORDER\s+BY)\b", rest, re.IGNORECASE
+                )
+                if clause_end_match:
+                    clause_body = rest[: clause_end_match.start()]
+                    after = rest[clause_end_match.start() :]
+                else:
+                    clause_body = rest
+                    after = ""
+
+                branch = (
+                    branch[: where_end]
+                    + f" {acl_clause} AND ({clause_body.strip()})"
+                    + f" {after}"
                 )
             else:
                 # No WHERE — insert before WITH or RETURN
@@ -159,10 +178,20 @@ def inject_cert_union(cypher: str) -> str:
     if "HOLDS_CERT" in upper:
         return cypher
 
-    # Extract the skill filter value from the skill path
-    # Pattern: toLower(s.name_ascii) CONTAINS 'xxx'
+    # Extract the skill filter value from the SKILL_OF path.
+    # Find the Skill variable (the target of SKILL_OF) and look for its
+    # CONTAINS filter.  E.g. ``(s:Skill) WHERE ... toLower(s.name_ascii)
+    # CONTAINS 'togaf'``.  We must NOT pick up CONTAINS filters from
+    # unrelated parts of the query (e.g. company name filters).
+    skill_var_match = re.search(
+        r":SKILL_OF\]->\(\s*(\w+)\s*:\s*Skill\b", cypher
+    )
+    if not skill_var_match:
+        return cypher
+    skill_var = skill_var_match.group(1)
+
     skill_match = re.search(
-        r"toLower\(\w+\.name_ascii\)\s+CONTAINS\s+'([^']+)'",
+        rf"toLower\({re.escape(skill_var)}\.name_ascii\)\s+CONTAINS\s+'([^']+)'",
         cypher,
         re.IGNORECASE,
     )

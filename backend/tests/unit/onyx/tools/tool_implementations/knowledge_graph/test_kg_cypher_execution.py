@@ -189,6 +189,50 @@ class TestInjectAclFilter:
         result = inject_acl_filter(cypher)
         assert "person.document_id IN $allowed_docs" in result
 
+    def test_or_clause_does_not_bypass_acl(self) -> None:
+        """ACL must wrap the entire WHERE condition in parens so OR branches
+        cannot bypass the document filter.
+
+        Without the fix: WHERE acl AND A OR B → (acl AND A) OR B
+        With the fix:    WHERE acl AND (A OR B)
+        """
+        cypher = (
+            "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project)"
+            "-[:PROJECT_AT]->(pc:Company) "
+            "WHERE toLower(pc.name_ascii) CONTAINS 'ministerstvo' "
+            "OR toLower(pc.name_ascii) CONTAINS 'mvsr' "
+            "WITH p "
+            "RETURN p.name"
+        )
+        result = inject_acl_filter(cypher)
+        assert "p.document_id IN $allowed_docs" in result
+        # The OR condition must be wrapped so ACL applies to BOTH branches
+        assert "AND (" in result
+        # The mvsr branch must NOT appear outside the parenthesised group
+        acl_pos = result.index("$allowed_docs")
+        and_paren_pos = result.index("AND (", acl_pos)
+        or_pos = result.upper().index(" OR ", and_paren_pos)
+        # OR must be inside the parenthesised group
+        assert or_pos > and_paren_pos
+
+    def test_or_acl_with_multiple_with_clauses(self) -> None:
+        """OR in first WHERE with subsequent WITH clauses."""
+        cypher = (
+            "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project)"
+            "-[:PROJECT_AT]->(pc:Company) "
+            "WHERE toLower(pc.name_ascii) CONTAINS 'a' "
+            "OR toLower(pc.name_ascii) CONTAINS 'b' "
+            "WITH p "
+            "MATCH (p)-[:HAS_EMPLOYMENT]->(e:Employment) "
+            "WHERE toLower(e.title) CONTAINS 'dev' "
+            "RETURN p.name"
+        )
+        result = inject_acl_filter(cypher)
+        # ACL wraps only the first WHERE's conditions
+        assert "AND (toLower(pc.name_ascii)" in result
+        # Second WHERE is untouched
+        assert "WHERE toLower(e.title) CONTAINS 'dev'" in result
+
 
 class TestInjectCertUnion:
     def test_adds_cert_branch_for_skill_query(self) -> None:
@@ -240,6 +284,28 @@ class TestInjectCertUnion:
         )
         result = inject_cert_union(cypher)
         assert result == cypher
+
+    def test_uses_skill_var_not_first_contains(self) -> None:
+        """cert union must extract the skill term from the Skill variable,
+        not the first CONTAINS in the query (which may be a company filter)."""
+        cypher = (
+            "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project)"
+            "-[:PROJECT_AT]->(pc:Company) "
+            "WHERE toLower(pc.name_ascii) CONTAINS 'ministerstvo' "
+            "OR toLower(pc.name_ascii) CONTAINS 'mvsr' "
+            "WITH p "
+            "MATCH (p)-[:HAS_PERSON_SKILL]->(ps:PersonSkill)"
+            "-[:SKILL_OF]->(s:Skill) "
+            "WHERE toLower(s.name_ascii) CONTAINS 'togaf' "
+            "AND p.document_id IN $allowed_docs "
+            "RETURN DISTINCT p.name AS name, p.document_id AS source_document"
+        )
+        result = inject_cert_union(cypher)
+        assert "UNION" in result
+        cert_part = result.split("UNION")[1]
+        # Must search for 'togaf' (the skill), NOT 'ministerstvo' (the company)
+        assert "'togaf'" in cert_part
+        assert "'ministerstvo'" not in cert_part
 
     def test_preserves_complex_return(self) -> None:
         cypher = (
