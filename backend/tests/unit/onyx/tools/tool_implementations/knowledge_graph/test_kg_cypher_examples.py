@@ -100,6 +100,37 @@ class TestCypherExamples:
             )
 
 
+    def test_list_all_examples_aggregate_not_distinct(self) -> None:
+        """'List all ...' examples that join Person→Entity must use
+        WITH + collect() to group by the target entity, NOT rely on
+        DISTINCT across a many-to-many join (which produces one row per
+        person-entity pair instead of one row per entity).
+        """
+        import re
+
+        list_all_with_join = [
+            ex
+            for ex in RELATIONSHIP_CYPHER_EXAMPLES
+            if re.search(r"\blist all\b", ex["question"], re.IGNORECASE)
+            and ":Person" in ex["cypher"]
+        ]
+        # Sanity: we should have at least the three "list all" examples
+        # (projects, certifications, skills)
+        assert len(list_all_with_join) >= 3, (
+            f"Expected ≥3 'List all' join examples, found {len(list_all_with_join)}"
+        )
+        for ex in list_all_with_join:
+            # If the query is person-filtered (WHERE toLower(p.name_ascii) ...),
+            # DISTINCT is fine — skip it.
+            if re.search(r"toLower\(\w+\.name_ascii\)\s+CONTAINS", ex["cypher"]):
+                continue
+            assert re.search(r"\bcollect\b", ex["cypher"], re.IGNORECASE), (
+                f"'List all' example '{ex['question']}' joins Person but "
+                f"doesn't use collect() — will produce duplicate rows "
+                f"when multiple people link to the same entity"
+            )
+
+
 class TestFormatCypherExamples:
     def test_format_output(self) -> None:
         examples = [

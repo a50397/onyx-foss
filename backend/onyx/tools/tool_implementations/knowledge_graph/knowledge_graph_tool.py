@@ -539,11 +539,20 @@ class KnowledgeGraphTool(Tool[KnowledgeGraphToolOverrideKwargs]):
             "    company/customer, search BOTH the project name AND the linked company.\n"
             "    The customer name is often embedded in the project name itself (e.g.\n"
             "    'Implementácia IS pre MV SR') without a separate PROJECT_AT link.\n"
-            "    Use OPTIONAL MATCH for the company and OR across both:\n"
+            "    Use OPTIONAL MATCH for the company, then WITH to collect variables,\n"
+            "    then WHERE to filter. NEVER put the filter WHERE directly after\n"
+            "    OPTIONAL MATCH — it does NOT filter rows, it only controls whether\n"
+            "    the optional variable is bound or null.\n"
+            "    CORRECT:\n"
+            "      MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project)\n"
+            "      OPTIONAL MATCH (proj)-[:PROJECT_AT]->(pc:Company)\n"
+            "      WITH p, proj, pc\n"
+            "      WHERE toLower(proj.name_ascii) CONTAINS 'vnutra'\n"
+            "         OR toLower(coalesce(pc.name_ascii, '')) CONTAINS 'vnutra'\n"
+            "    WRONG (does not filter — all projects pass through):\n"
             "      MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project)\n"
             "      OPTIONAL MATCH (proj)-[:PROJECT_AT]->(pc:Company)\n"
             "      WHERE toLower(proj.name_ascii) CONTAINS 'vnutra'\n"
-            "         OR toLower(pc.name_ascii) CONTAINS 'vnutra'\n"
             "14. RICH OUTPUT: Always include relevant attributes in the RETURN clause:\n"
             "    - Employment: e.title, e.start_year, e.end_year\n"
             "    - Projects: proj.start_year, proj.end_year, and OPTIONAL MATCH the company\n"
@@ -776,6 +785,7 @@ class KnowledgeGraphTool(Tool[KnowledgeGraphToolOverrideKwargs]):
             execute_cypher,
             inject_acl_filter,
             inject_cert_union,
+            inject_optional_match_filter,
             validate_kg_cypher,
         )
 
@@ -796,6 +806,7 @@ class KnowledgeGraphTool(Tool[KnowledgeGraphToolOverrideKwargs]):
 
                 validate_kg_cypher(cypher)
                 cypher = inject_acl_filter(cypher)
+                cypher = inject_optional_match_filter(cypher)
                 cypher = inject_cert_union(cypher)
                 cypher = enforce_cypher_row_limit(cypher, max_rows=MAX_RESULT_ROWS)
                 logger.info(

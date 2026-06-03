@@ -119,10 +119,12 @@ def inject_acl_filter(cypher: str) -> str:
                 where_end = first_where.end()
 
                 # Find the end of this WHERE clause — bounded by WITH, RETURN,
-                # ORDER, UNION, or end of string.
+                # ORDER, OPTIONAL MATCH, UNION, or end of string.
                 rest = branch[where_end:]
                 clause_end_match = re.search(
-                    r"\b(WITH|RETURN|ORDER\s+BY)\b", rest, re.IGNORECASE
+                    r"\b(WITH|RETURN|ORDER\s+BY|OPTIONAL\s+MATCH|MATCH)\b",
+                    rest,
+                    re.IGNORECASE,
                 )
                 if clause_end_match:
                     clause_body = rest[: clause_end_match.start()]
@@ -134,7 +136,7 @@ def inject_acl_filter(cypher: str) -> str:
                 branch = (
                     branch[: where_end]
                     + f" {acl_clause} AND ({clause_body.strip()})"
-                    + f" {after}"
+                    + f"\n{after}"
                 )
             else:
                 # No WHERE — insert before WITH or RETURN
@@ -156,6 +158,86 @@ def inject_acl_filter(cypher: str) -> str:
             result_branches.append(branch)
 
     return " UNION ".join(result_branches)
+
+
+def inject_optional_match_filter(cypher: str) -> str:
+    """Re-apply the first WHERE conditions after each OPTIONAL MATCH.
+
+    Without this, OPTIONAL MATCH can fan out the result set beyond the
+    rows matched by the first MATCH + WHERE.  For example::
+
+        MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project)
+        WHERE toLower(p.name_ascii) CONTAINS 'iro'
+        OPTIONAL MATCH (proj)-[:PROJECT_AT]->(c:Company)
+
+    may return projects for ALL people, not just 'iro'.  Adding a WHERE
+    after the OPTIONAL MATCH constrains the results::
+
+        OPTIONAL MATCH (proj)-[:PROJECT_AT]->(c:Company)
+        WHERE toLower(p.name_ascii) CONTAINS 'iro'
+    """
+    if not re.search(r"\bOPTIONAL\s+MATCH\b", cypher, re.IGNORECASE):
+        return cypher
+
+    # ── 1. Extract the first WHERE clause body ───────────────────────
+    first_where = re.search(r"\bWHERE\b", cypher, re.IGNORECASE)
+    if not first_where:
+        return cypher
+
+    where_end = first_where.end()
+    rest = cypher[where_end:]
+
+    clause_end = re.search(
+        r"\b(WITH|RETURN|ORDER\s+BY|OPTIONAL\s+MATCH|MATCH)\b",
+        rest,
+        re.IGNORECASE,
+    )
+    if not clause_end:
+        return cypher
+
+    where_body = rest[: clause_end.start()].strip()
+    if not where_body:
+        return cypher
+
+    # ── 2. Insert WHERE <conditions> after each OPTIONAL MATCH clause ─
+    # Split on OPTIONAL MATCH boundaries and insert WHERE after each one.
+    # If the OPTIONAL MATCH already has a WHERE, merge with AND.
+    parts = re.split(
+        r"(\bOPTIONAL\s+MATCH\s+\([^)]*\)(?:\s*-\[[^\]]*\]->\s*\([^)]*\))?)",
+        cypher,
+        flags=re.IGNORECASE,
+    )
+
+    result_parts: list[str] = []
+    for i, part in enumerate(parts):
+        result_parts.append(part)
+        if re.match(
+            r"OPTIONAL\s+MATCH\b", part.strip(), re.IGNORECASE
+        ):
+            # Check if the next part starts with WHERE
+            if i + 1 < len(parts):
+                next_part = parts[i + 1].lstrip()
+                if next_part.lstrip().upper().startswith("WHERE"):
+                    # Merge: prepend conditions into existing WHERE
+                    where_kw_end = (
+                        next_part.upper().index("WHERE") + 5
+                    )
+                    parts[i + 1] = (
+                        f"\nWHERE {where_body} AND"
+                        + next_part[where_kw_end:]
+                    )
+                else:
+                    result_parts.append(f"\nWHERE {where_body}")
+
+    result = "".join(result_parts)
+
+    if result != cypher:
+        logger.info(
+            "inject_optional_match_filter: duplicated WHERE conditions "
+            "after OPTIONAL MATCH"
+        )
+
+    return result
 
 
 def inject_cert_union(cypher: str) -> str:

@@ -6,6 +6,7 @@ from onyx.db.kg_cypher_execution import (
     enforce_cypher_row_limit,
     inject_acl_filter,
     inject_cert_union,
+    inject_optional_match_filter,
     KGCypherValidationError,
     parse_cypher_from_llm_response,
     validate_kg_cypher,
@@ -234,6 +235,94 @@ class TestInjectAclFilter:
         assert "WHERE toLower(e.title) CONTAINS 'dev'" in result
 
 
+    def test_where_before_optional_match(self) -> None:
+        """WHERE clause followed by OPTIONAL MATCH must not swallow the
+        OPTIONAL MATCH into the parenthesised condition."""
+        cypher = (
+            "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project) "
+            "WHERE toLower(p.name_ascii) CONTAINS 'iro' "
+            "OPTIONAL MATCH (proj)-[:PROJECT_AT]->(c:Company) "
+            "RETURN proj.name AS project, c.name AS company"
+        )
+        result = inject_acl_filter(cypher)
+        assert "OPTIONAL MATCH" in result
+        # The OPTIONAL MATCH must NOT be inside the parenthesised WHERE group
+        assert "OPTIONAL MATCH (proj)-[:PROJECT_AT]->(c:Company))" not in result
+        # Verify valid structure: WHERE ... OPTIONAL MATCH ... RETURN
+        where_pos = result.index("WHERE")
+        optional_pos = result.index("OPTIONAL MATCH")
+        return_pos = result.index("RETURN")
+        assert where_pos < optional_pos < return_pos
+
+    def test_where_before_second_match(self) -> None:
+        """WHERE clause followed by a second MATCH (not OPTIONAL) must not
+        swallow the MATCH into the parenthesised condition."""
+        cypher = (
+            "MATCH (p:Person)-[:HAS_EMPLOYMENT]->(e:Employment) "
+            "WHERE toLower(e.title) CONTAINS 'dev' "
+            "MATCH (p)-[:HOLDS_CERT]->(c:Certification) "
+            "RETURN p.name"
+        )
+        result = inject_acl_filter(cypher)
+        # Second MATCH must remain outside the WHERE clause
+        assert "MATCH (p)-[:HOLDS_CERT]" in result
+        where_pos = result.index("WHERE")
+        second_match_pos = result.index("MATCH (p)-[:HOLDS_CERT]")
+        assert where_pos < second_match_pos
+
+
+class TestInjectOptionalMatchFilter:
+    def test_duplicates_where_after_optional_match(self) -> None:
+        """The exact bug: OPTIONAL MATCH re-expands results beyond the
+        first WHERE filter."""
+        cypher = (
+            "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project) "
+            "WHERE p.document_id IN $allowed_docs "
+            "AND (toLower(p.name_ascii) CONTAINS 'iro') "
+            "OPTIONAL MATCH (proj)-[:PROJECT_AT]->(c:Company) "
+            "WITH p, proj, c "
+            "RETURN proj.name AS project, c.name AS company"
+        )
+        result = inject_optional_match_filter(cypher)
+        # WHERE conditions must appear after OPTIONAL MATCH
+        parts = result.split("OPTIONAL MATCH")
+        assert len(parts) == 2
+        after_opt = parts[1]
+        assert "WHERE" in after_opt
+        assert "name_ascii" in after_opt
+        assert "$allowed_docs" in after_opt
+
+    def test_skips_when_no_optional_match(self) -> None:
+        cypher = (
+            "MATCH (p:Person)-[:HOLDS_CERT]->(c:Certification) "
+            "WHERE toLower(c.name_ascii) CONTAINS 'aws' "
+            "RETURN p.name"
+        )
+        result = inject_optional_match_filter(cypher)
+        assert result == cypher
+
+    def test_skips_when_no_where(self) -> None:
+        cypher = (
+            "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project) "
+            "OPTIONAL MATCH (proj)-[:PROJECT_AT]->(c:Company) "
+            "RETURN proj.name"
+        )
+        result = inject_optional_match_filter(cypher)
+        assert result == cypher
+
+    def test_preserves_rest_of_query(self) -> None:
+        cypher = (
+            "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project) "
+            "WHERE toLower(p.name_ascii) CONTAINS 'iro' "
+            "OPTIONAL MATCH (proj)-[:PROJECT_AT]->(c:Company) "
+            "RETURN proj.name AS project, c.name AS company "
+            "ORDER BY project"
+        )
+        result = inject_optional_match_filter(cypher)
+        assert "ORDER BY project" in result
+        assert "RETURN" in result
+
+
 class TestInjectCertUnion:
     def test_adds_cert_branch_for_skill_query(self) -> None:
         cypher = (
@@ -327,3 +416,4 @@ class TestInjectCertUnion:
         assert "NULL AS company" in cert_part
         # Cert name is included
         assert "cert.name AS matched_certification" in cert_part
+

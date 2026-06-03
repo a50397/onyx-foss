@@ -80,6 +80,17 @@ RELATIONSHIP_CYPHER_EXAMPLES: list[CypherExample] = [
         ),
     },
     {
+        # NOTE: When listing all certifications (no person filter), group by
+        # certification and collect holders to avoid duplicates.
+        "question": "List all certifications people hold",
+        "cypher": (
+            "MATCH (p:Person)-[:HOLDS_CERT]->(c:Certification) "
+            "WITH c, collect(DISTINCT p.name) AS holders "
+            "RETURN c.name AS certification, c.issuer AS issuer, holders "
+            "ORDER BY c.name"
+        ),
+    },
+    {
         "question": "List all certifications held by John Smith",
         "cypher": (
             "MATCH (p:Person)-[:HOLDS_CERT]->(c:Certification) "
@@ -154,6 +165,19 @@ RELATIONSHIP_CYPHER_EXAMPLES: list[CypherExample] = [
         ),
     },
     {
+        # NOTE: When listing all skills across everyone, group by skill and
+        # collect people to avoid one row per person-skill pair.
+        "question": "List all skills people have",
+        "cypher": (
+            "MATCH (p:Person)-[:HAS_PERSON_SKILL]->(ps:PersonSkill)"
+            "-[:SKILL_OF]->(s:Skill) "
+            "WITH s, collect(DISTINCT p.name) AS people, "
+            "max(ps.years_experience) AS max_years "
+            "RETURN s.name AS skill, size(people) AS headcount, max_years "
+            "ORDER BY headcount DESC"
+        ),
+    },
+    {
         "question": "Who has SENIOR proficiency in any skill?",
         "cypher": (
             "MATCH (p:Person)-[:HAS_PERSON_SKILL]->(ps:PersonSkill)"
@@ -217,15 +241,34 @@ RELATIONSHIP_CYPHER_EXAMPLES: list[CypherExample] = [
     },
     # --- Projects ---
     {
+        # NOTE: When listing all projects (no person filter), group by project
+        # using WITH + collect to avoid duplicate rows from multiple people
+        # working on the same project.
+        "question": "List all projects",
+        "cypher": (
+            "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project) "
+            "OPTIONAL MATCH (proj)-[:PROJECT_AT]->(c:Company) "
+            "WITH proj, c, collect(DISTINCT p.name) AS people "
+            "RETURN proj.name AS project, c.name AS company, "
+            "proj.start_year AS start_year, proj.end_year AS end_year, people "
+            "ORDER BY proj.start_year"
+        ),
+    },
+    {
+        # NOTE: Even for a person-specific query, use WITH + collect to group
+        # by project.  OPTIONAL MATCH on company can fan out rows, and the
+        # same person may appear across multiple documents (document_ids).
         "question": "What projects has John Smith worked on?",
         "cypher": (
             "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project) "
             "WHERE toLower(p.name_ascii) CONTAINS 'john smith' "
             "OPTIONAL MATCH (proj)-[:PROJECT_AT]->(c:Company) "
-            "RETURN DISTINCT p.name AS name, proj.name AS project, c.name AS company, "
+            "WITH proj, collect(DISTINCT c.name) AS companies, "
             "proj.start_year AS start_year, proj.end_year AS end_year, "
-            "p.document_id AS source_document "
-            "ORDER BY proj.start_year"
+            "collect(DISTINCT p.document_id) AS source_documents "
+            "RETURN proj.name AS project, companies, start_year, end_year, "
+            "source_documents "
+            "ORDER BY start_year"
         ),
     },
     {
@@ -284,6 +327,9 @@ RELATIONSHIP_CYPHER_EXAMPLES: list[CypherExample] = [
         # not the generic 'ministerstvo' which matches every ministry.
         # NOTE: Search BOTH proj.name_ascii and pc.name_ascii — the customer
         # name is often embedded in the project name without a PROJECT_AT link.
+        # NOTE: OPTIONAL MATCH + WITH + WHERE pattern — the WHERE must come
+        # AFTER WITH to act as a row filter.  WHERE directly after OPTIONAL
+        # MATCH does NOT filter rows.
         "question": (
             "Who worked on a project for Ministerstvo vnútra, works at Ditec "
             "for at least 2 years, and holds an SOA certification?"
@@ -291,8 +337,9 @@ RELATIONSHIP_CYPHER_EXAMPLES: list[CypherExample] = [
         "cypher": (
             "MATCH (p:Person)-[:WORKS_ON_PROJECT]->(proj:Project) "
             "OPTIONAL MATCH (proj)-[:PROJECT_AT]->(pc:Company) "
+            "WITH p, proj, pc "
             "WHERE toLower(proj.name_ascii) CONTAINS 'vnutra' "
-            "OR toLower(pc.name_ascii) CONTAINS 'vnutra' "
+            "OR toLower(coalesce(pc.name_ascii, '')) CONTAINS 'vnutra' "
             "WITH p "
             "MATCH (p)-[:HAS_EMPLOYMENT]->(e:Employment)"
             "-[:EMPLOYMENT_AT]->(c:Company) "
